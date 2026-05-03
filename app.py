@@ -1,39 +1,59 @@
 import docx
 import pandas as pd
+import tkinter as tk
+from tkinter import filedialog, messagebox
 
-def extract_only_scores(file_path, output_name):
-    doc = docx.Document(file_path)
-    all_scores = []
+def extract_scores_from_word():
+    # 1. Menampilkan jendela pilih file
+    root = tk.Tk()
+    root.withdraw() # Sembunyikan jendela utama tkinter
     
-    for table in doc.tables:
-        for row in table.rows:
-            # Mengambil teks dari sel 0-5 (No, Dimensi, Aitem, Kejelasan, Relevansi, Kesesuaian)
-            cells = [cell.text.strip() for cell in row.cells]
-            
-            if len(cells) >= 6:
-                aitem_text = cells[2]
-                s_kejelasan = cells[3]
-                s_relevansi = cells[4]
-                s_kesesuaian = cells[5]
+    file_path = filedialog.askopenfilename(
+        title="Pilih File Word Validasi",
+        filetypes=[("Word files", "*.docx")]
+    )
+    
+    if not file_path:
+        print("Pemilihan file dibatalkan.")
+        return
+
+    try:
+        doc = docx.Document(file_path)
+        data_skor = []
+        
+        # 2. Proses ekstraksi tabel
+        for table in doc.tables:
+            for row in table.rows:
+                cells = [cell.text.strip() for cell in row.cells]
                 
-                # Filter: Pastikan kita hanya mengambil baris yang memiliki nilai angka
-                # Ini menghindari pengambilan header tabel atau baris kosong
-                if any(s.isdigit() for s in [s_kejelasan, s_relevansi, s_kesesuaian]):
-                    all_scores.append({
-                        "Aitem Skala": aitem_text,
-                        "Skor Kejelasan": s_kejelasan,
-                        "Skor Relevansi": s_relevansi,
-                        "Skor Kesesuaian": s_kesesuaian
-                    })
+                # Sesuai struktur dokumen:
+                # Kolom 3: Kejelasan | Kolom 4: Relevansi | Kolom 5: Kesesuaian
+                if len(cells) >= 6:
+                    k = cells[3]
+                    r = cells[4]
+                    s = cells[5]
+                    
+                    # Validasi: Hanya ambil jika berisi angka (Skor 1-4) [cite: 10]
+                    if k.isdigit() or r.isdigit() or s.isdigit():
+                        data_skor.append({
+                            "Aitem": cells[2], # Teks pernyataan 
+                            "Kejelasan": k,
+                            "Relevansi": r,
+                            "Kesesuaian": s
+                        })
+        
+        if data_skor:
+            # 3. Simpan ke Excel secara horizontal
+            df = pd.DataFrame(data_skor)
+            output_file = file_path.replace(".docx", "_HASIL_SKOR.xlsx")
+            df.to_excel(output_file, index=False)
+            
+            messagebox.showinfo("Berhasil", f"Data berhasil diekstrak ke:\n{output_file}")
+        else:
+            messagebox.showwarning("Peringatan", "Tidak ditemukan data skor angka di dalam tabel.")
 
-    # Membuat DataFrame
-    df = pd.DataFrame(all_scores)
-    
-    # Simpan ke Excel
-    df.to_excel(output_name, index=False)
-    print(f"Selesai! {len(df)} baris skor berhasil diekstrak ke {output_name}")
+    except Exception as e:
+        messagebox.showerror("Error", f"Terjadi kesalahan: {e}")
 
-# Jalankan dengan nama file Anda
-file_input = "Form_Validasi_Expert_Judgement_Forgiveness_Qori_atul_Tri_Setya_A.docx"
-file_output = "Rekap_Skor_Horizontal.xlsx"
-extract_only_scores(file_input, file_output)
+if __name__ == "__main__":
+    extract_scores_from_word()
