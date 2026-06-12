@@ -16,75 +16,94 @@ uploaded_file = st.file_uploader("Pilih file Google Form", type=["csv", "xlsx"])
 
 def generate_styled_excel(df_data, include_link=True):
     """
-    Fungsi untuk membuat file Excel di memori dengan kustomisasi layout dan style:
-    - Kosongkan Kolom A (Data dimulai dari Kolom B)
-    - 6 Baris awal template judul (Baris 3 & 4 digabung/merge & bold)
-    - Header kolom di baris 7 (Warna Hijau Muda & bold)
+    Fungsi untuk membuat file Excel di memori dengan kustomisasi layout baru:
+    - Baris 1: Kosong
+    - Baris 2 & 3: Judul (Merged & Bold)
+    - Baris 4: Kosong
+    - Baris 5: Header Tabel (Warna Hijau Lebih Gelap & Bold)
+    - Baris 6 dst: Data (Nomor dimulai dari 1, Teks Nama Capitalize Each Word)
+    - Kolom A kosong total. Semua data bergeser mulai Kolom B.
     """
     wb = Workbook()
     ws = wb.active
     ws.title = "Hasil_Acak"
     
-    # 1. Setup Judul di baris 3 dan 4
-    ws['B3'] = "REKAPITULASI URUTAN SHADOWING PRACTICING"
-    ws['B4'] = "LAST MEETING WONDERFUL CLASS 2026"
+    # 1. Setup Judul di baris 2 dan 3
+    ws['B2'] = "REKAPITULASI URUTAN SHADOWING PRACTICING"
+    ws['B3'] = "LAST MEETING WONDERFUL CLASS 2026"
     
-    # Menentukan rentang kolom yang akan di-merge untuk judul berdasarkan jumlah kolom data
-    max_col_letter = 'F' if include_link else 'E' # Karena data bergeser ke kanan, kolom berakhir di E atau F
+    # Menentukan rentang kolom untuk merge judul
+    max_col_letter = 'F' if include_link else 'E' 
     
+    ws.merge_cells(f'B2:{max_col_letter}2')
     ws.merge_cells(f'B3:{max_col_letter}3')
-    ws.merge_cells(f'B4:{max_col_letter}4')
     
     # Style Judul
     title_font = Font(name='Arial', size=12, bold=True)
     center_align = Alignment(horizontal='center', vertical='center')
     
+    ws['B2'].font = title_font
+    ws['B2'].alignment = center_align
     ws['B3'].font = title_font
     ws['B3'].alignment = center_align
-    ws['B4'].font = title_font
-    ws['B4'].alignment = center_align
     
-    # Set tinggi baris agar lebih rapi
+    ws.row_dimensions[2].height = 20
     ws.row_dimensions[3].height = 20
-    ws.row_dimensions[4].height = 20
     
-    # 2. Setup Header Kolom di Baris 7
+    # 2. Setup Header Kolom di Baris 5
     headers = ["No.", "Nama Lengkap", "Class", "Status Keangggotaan"]
     if include_link:
         headers.append("Link Drive")
         
     header_font = Font(name='Arial', size=11, bold=True)
-    header_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid") # Hijau muda
+    # Menggunakan warna hijau yang lebih gelap/solid (Medium Sea Green / Mint Darker)
+    header_fill = PatternFill(start_color="93D1A3", end_color="93D1A3", fill_type="solid") 
     
-    for col_num, header_title in enumerate(headers, start=2): # Start=2 artinya dimulai dari Kolom B
-        cell = ws.cell(row=7, column=col_num)
+    for col_num, header_title in enumerate(headers, start=2): # Start dari Kolom B
+        cell = ws.cell(row=5, column=col_num)
         cell.value = header_title
         cell.font = header_font
         cell.fill = header_fill
         cell.alignment = center_align
     
-    # 3. Masukkan Data Orang ke Excel mulai dari Baris 8, Kolom B
-    for row_num, row_data in enumerate(dataframe_to_rows(df_data, index=False, header=False), start=8):
-        # Kolom B: Nomor urut (No. 1 - sekian)
-        no_cell = ws.cell(row=row_num, column=2, value=row_num - 7)
+    ws.row_dimensions[5].height = 22
+    
+    # 3. Masukkan Data ke Excel mulai dari Baris 6
+    for row_idx, row_data in enumerate(dataframe_to_rows(df_data, index=False, header=False), start=6):
+        # Kolom B: Nomor Urut (Dipastikan mulai tepat dari 1)
+        current_no = row_idx - 5
+        no_cell = ws.cell(row=row_idx, column=2, value=current_no)
         no_cell.alignment = center_align
         
-        # Kolom C dst: Data Nama, Class, Status, Link
-        for col_idx, value in enumerate(row_data, start=3):
-            # Jika tidak include_link, baris data link terluar otomatis terpotong dari seleksi DataFrame
-            ws.cell(row=row_num, column=col_idx, value=value)
+        # Kolom C dst: Isi data
+        for col_offset, value in enumerate(row_data):
+            target_col = col_offset + 3 # Mulai dari Kolom C (indeks 3)
             
-    # Auto-fit lebar kolom agar teks tidak terpotong (opsional tapi sangat membantu)
+            # Evaluasi khusus untuk Kolom C (Nama Lengkap) agar otomatis Capitalize Each Word (.title())
+            if target_col == 3 and isinstance(value, str):
+                value = value.title()
+                
+            ws.cell(row=row_idx, column=target_col, value=value)
+            
+    # 4. Auto-fit Lebar Kolom Secara Akurat (Termasuk Kolom No.)
     for col in ws.columns:
-        max_len = max(len(str(cell.value or '')) for cell in col)
         col_letter = col[0].column_letter
-        if col_letter != 'A': # Abaikan kolom A yang kosong
-            ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
+        if col_letter == 'A':
+            ws.column_dimensions['A'].width = 3  # Kolom A dibiarkan tetap ramping
+            continue
             
-    # Atur kolom A tetap ramping karena sengaja dikosongkan
-    ws.column_dimensions['A'].width = 3
+        max_len = 0
+        for cell in col:
+            # Lewati baris 2 dan 3 saat menghitung panjang kolom agar efek 'merged cells' tidak merusak kalkulasi lebar
+            if cell.row in [2, 3]:
+                continue
+            if cell.value is not None:
+                max_len = max(max_len, len(str(cell.value)))
+                
+        # Berikan padding agar ruang teks aman dan tidak memicu "###" atau terpotong
+        ws.column_dimensions[col_letter].width = max(max_len + 4, 10)
 
-    # Simpan ke dalam format buffer bytes
+    # Simpan ke format buffer bytes
     buffer = io.BytesIO()
     wb.save(buffer)
     return buffer.getvalue()
@@ -116,19 +135,19 @@ if uploaded_file is not None:
             
             df_sorted = pd.concat([df_b, df_a, df_others], ignore_index=True)
             
-            # 3. Mapping struktur kolom baru dan membersihkan data lama
-            # Sesuai urutan target: Nama Lengkap; Class; Status Keangggotaan; Link Drive
-            # Menggunakan penamaan kolom dinamis berdasarkan posisi/nama asli file gform
+            # 3. Mapping struktur kolom baru
             nama_col = 'Nama Lengkap'
             status_col = 'Status Peserta'
-            link_col = df.columns[5] # Kolom ke-6 adalah instruksi/Link Drive Video Practice
+            link_col = df.columns[5] # Kolom instruksi/Link Drive Video
             
-            # Buat DataFrame dasar yang susunan kolomnya sudah rapi (tanpa Timestamp)
             df_clean_full = df_sorted[[nama_col, target_col, status_col, link_col]].copy()
             df_clean_no_link = df_sorted[[nama_col, target_col, status_col]].copy()
             
+            # Format preview DataFrame di Streamlit agar Nama tampil Capitalize Each Word
+            df_clean_full[nama_col] = df_clean_full[nama_col].astype(str).str.title()
+            df_clean_no_link[nama_col] = df_clean_no_link[nama_col].astype(str).str.title()
+            
             st.subheader("📊 Preview Hasil Struktur Baru")
-            st.write("Data di bawah ini adalah representasi mentahnya. Saat di-download, data otomatis bergeser mulai dari **Kolom B** dan dilengkapi template judul atas.")
             st.dataframe(df_clean_full)
             
             # --- Proses Generate Excel Menggunakan OpenPyXL ---
