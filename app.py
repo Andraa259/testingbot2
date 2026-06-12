@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import io
 from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, PatternFill
+from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
 
 # Konfigurasi halaman
@@ -16,17 +16,15 @@ uploaded_file = st.file_uploader("Pilih file Google Form", type=["csv", "xlsx"])
 
 def generate_styled_excel(df_data, include_link=True):
     """
-    Fungsi untuk membuat file Excel di memori dengan kustomisasi layout baru:
-    - Baris 1: Kosong
-    - Baris 2 & 3: Judul (Merged & Bold)
-    - Baris 4: Kosong
-    - Baris 5: Header Tabel (Warna Hijau Lebih Gelap & Bold)
-    - Baris 6 dst: Data (Nomor dimulai dari 1, Teks Nama Capitalize Each Word)
-    - Kolom A kosong total. Semua data bergeser mulai Kolom B.
+    Fungsi untuk membuat file Excel di memori dengan kustomisasi layout dan styling lengkap:
+    - Penataan Baris 1-5 sesuai aturan Evaluasi Tahap 2.
+    - Semua sel tabel memiliki border tipis (Thin Border).
+    - Alignment: No., Class, Status Keanggotaan dibuat Center. Nama Lengkap & Link Drive dibuat Left.
+    - Kolom Link Drive memiliki lebar statis (44) dan Wrap Text aktif.
     """
     wb = Workbook()
     ws = wb.active
-    ws.title = "Hasil_Acak"
+    ws.title = "Hasil Sort"
     
     # 1. Setup Judul di baris 2 dan 3
     ws['B2'] = "REKAPITULASI URUTAN SHADOWING PRACTICING"
@@ -40,15 +38,19 @@ def generate_styled_excel(df_data, include_link=True):
     
     # Style Judul
     title_font = Font(name='Arial', size=12, bold=True)
-    center_align = Alignment(horizontal='center', vertical='center')
+    title_align = Alignment(horizontal='center', vertical='center')
     
     ws['B2'].font = title_font
-    ws['B2'].alignment = center_align
+    ws['B2'].alignment = title_align
     ws['B3'].font = title_font
-    ws['B3'].alignment = center_align
+    ws['B3'].alignment = title_align
     
     ws.row_dimensions[2].height = 20
     ws.row_dimensions[3].height = 20
+    
+    # Definisi Border Tipis untuk Tabel
+    thin_side = Side(border_style="thin", color="000000")
+    table_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
     
     # 2. Setup Header Kolom di Baris 5
     headers = ["No.", "Nama Lengkap", "Class", "Status Keangggotaan"]
@@ -56,51 +58,75 @@ def generate_styled_excel(df_data, include_link=True):
         headers.append("Link Drive")
         
     header_font = Font(name='Arial', size=11, bold=True)
-    # Menggunakan warna hijau yang lebih gelap/solid (Medium Sea Green / Mint Darker)
-    header_fill = PatternFill(start_color="93D1A3", end_color="93D1A3", fill_type="solid") 
+    header_fill = PatternFill(start_color="93D1A3", end_color="93D1A3", fill_type="solid") # Hijau Solid
+    header_align = Alignment(horizontal='center', vertical='center')
     
     for col_num, header_title in enumerate(headers, start=2): # Start dari Kolom B
         cell = ws.cell(row=5, column=col_num)
         cell.value = header_title
         cell.font = header_font
         cell.fill = header_fill
-        cell.alignment = center_align
+        cell.alignment = header_align
+        cell.border = table_border
     
     ws.row_dimensions[5].height = 22
     
+    # Alignment khusus untuk isi data tabel
+    align_center = Alignment(horizontal='center', vertical='center')
+    align_left = Alignment(horizontal='left', vertical='center')
+    align_wrap_left = Alignment(horizontal='left', vertical='center', wrap_text=True)
+    
     # 3. Masukkan Data ke Excel mulai dari Baris 6
     for row_idx, row_data in enumerate(dataframe_to_rows(df_data, index=False, header=False), start=6):
-        # Kolom B: Nomor Urut (Dipastikan mulai tepat dari 1)
+        # Kolom B: Nomor Urut (Center)
         current_no = row_idx - 5
         no_cell = ws.cell(row=row_idx, column=2, value=current_no)
-        no_cell.alignment = center_align
+        no_cell.alignment = align_center
+        no_cell.border = table_border
         
         # Kolom C dst: Isi data
         for col_offset, value in enumerate(row_data):
             target_col = col_offset + 3 # Mulai dari Kolom C (indeks 3)
+            cell = ws.cell(row=row_idx, column=target_col, value=value)
+            cell.border = table_border
             
-            # Evaluasi khusus untuk Kolom C (Nama Lengkap) agar otomatis Capitalize Each Word (.title())
-            if target_col == 3 and isinstance(value, str):
-                value = value.title()
+            # Atur alignment dan format data berdasarkan jenis kolomnya
+            if target_col == 3:  # Kolom Nama Lengkap (Kolom C)
+                if isinstance(value, str):
+                    cell.value = value.title() # Capitalize Each Word
+                cell.alignment = align_left
                 
-            ws.cell(row=row_idx, column=target_col, value=value)
-            
-    # 4. Auto-fit Lebar Kolom Secara Akurat (Termasuk Kolom No.)
+            elif target_col == 4:  # Kolom Class (Kolom D)
+                cell.alignment = align_center
+                
+            elif target_col == 5:  # Kolom Status Keanggotaan (Kolom E)
+                cell.alignment = align_center
+                
+            elif target_col == 6:  # Kolom Link Drive (Kolom F)
+                cell.alignment = align_wrap_left
+                
+    # 4. Pengaturan Lebar Kolom (Auto-fit & Static Width)
     for col in ws.columns:
         col_letter = col[0].column_letter
+        
         if col_letter == 'A':
-            ws.column_dimensions['A'].width = 3  # Kolom A dibiarkan tetap ramping
+            ws.column_dimensions['A'].width = 3  # Kolom A kosong tetap ramping
             continue
             
+        # Evaluasi Kholes khusus Link Drive (Kolom F) sesuai Evaluasi Tahap 3
+        if include_link and col_letter == 'F':
+            ws.column_dimensions['F'].width = 44  # Set lebar fix ke 44
+            continue
+            
+        # Kalkulasi Auto-fit untuk kolom selain A dan F
         max_len = 0
         for cell in col:
-            # Lewati baris 2 dan 3 saat menghitung panjang kolom agar efek 'merged cells' tidak merusak kalkulasi lebar
+            # Lewati baris judul saat kalkulasi auto-fit lebar kolom
             if cell.row in [2, 3]:
                 continue
             if cell.value is not None:
                 max_len = max(max_len, len(str(cell.value)))
                 
-        # Berikan padding agar ruang teks aman dan tidak memicu "###" atau terpotong
         ws.column_dimensions[col_letter].width = max(max_len + 4, 10)
 
     # Simpan ke format buffer bytes
@@ -143,7 +169,7 @@ if uploaded_file is not None:
             df_clean_full = df_sorted[[nama_col, target_col, status_col, link_col]].copy()
             df_clean_no_link = df_sorted[[nama_col, target_col, status_col]].copy()
             
-            # Format preview DataFrame di Streamlit agar Nama tampil Capitalize Each Word
+            # Format preview di UI Streamlit
             df_clean_full[nama_col] = df_clean_full[nama_col].astype(str).str.title()
             df_clean_no_link[nama_col] = df_clean_no_link[nama_col].astype(str).str.title()
             
@@ -161,7 +187,7 @@ if uploaded_file is not None:
             col1, col2 = st.columns(2)
             
             with col1:
-                st.info("📂 **Output 1: Versi Lengkap**\n\nMemiliki struktur penuh termasuk kolom Link Drive.")
+                st.info("📂 **Output 1: Versi Lengkap**\n\nMemiliki struktur penuh termasuk kolom Link Drive (Lebar 44 + Wrap Text).")
                 st.download_button(
                     label="📥 Download Versi Lengkap (Excel)",
                     data=excel_full,
