@@ -1,4 +1,4 @@
-import streamlit as nn
+import streamlit as st
 import pandas as pd
 import io
 
