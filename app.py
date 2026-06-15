@@ -54,7 +54,7 @@ def generate_graduation_excel(df_processed):
     # 2. Setup Header Kolom di Baris 5
     headers = ["No.", "Nama Lengkap", "NBI", "Syarat Kelulusan"]
     
-    # Menggunakan warna Hijau Tua (Hex: 2E7D32) dengan font putih agar kontras dan terbaca jelas
+    # Menggunakan warna Hijau Tua (Hex: 2E7D32) dengan font putih agar kontras
     header_font = Font(name='Arial', size=11, bold=True, color="FFFFFF")
     header_fill = PatternFill(start_color="2E7D32", end_color="2E7D32", fill_type="solid")
     
@@ -91,8 +91,8 @@ def generate_graduation_excel(df_processed):
         nbi_cell.alignment = align_center
         nbi_cell.border = table_border
         
-        # Kolom E: Syarat Kelulusan (Center)
-        status_cell = ws.cell(row=current_row, column=5, value=row['Syarat Kelulusan'])
+        # Kolom E: Syarat Kelulusan (Center - Hanya Angka 1-4)
+        status_cell = ws.cell(row=current_row, column=5, value=int(row['Syarat Kelulusan']))
         status_cell.alignment = align_center
         status_cell.border = table_border
         
@@ -152,7 +152,7 @@ if uploaded_file is not None:
             # List nama kolom pertemuan 1-11
             p_cols = [f"Pertemuan {i}" for i in range(1, 12)]
             
-            # 5. Logika OR dan Percabangan Kelulusan
+            # 5. Logika Baru Pemetaan Angka Kelulusan
             def hitung_kelulusan(row):
                 # Hitung jumlah checkmark di pertemuan 1 s/d 11
                 total_hadir_reguler = 0
@@ -163,24 +163,28 @@ if uploaded_file is not None:
                 # Cek kehadiran di Pertemuan Final
                 ikut_final = 'Pertemuan Final' in df.columns and str(row['Pertemuan Final']).strip() == '✅'
                 
-                # Aturan Percabangan:
+                # Aturan Percabangan Baru Berbasis Angka Murni:
                 if total_hadir_reguler >= 6 and ikut_final:
-                    return "3: Keduanya"
+                    return 1  # 1 untuk Keduanya
                 elif total_hadir_reguler >= 6 and not ikut_final:
-                    return "1: Hadir 6 kali atau lebih"
+                    return 2  # 2 untuk pertemuan 6 kali atau lebih
                 elif total_hadir_reguler < 6 and ikut_final:
-                    return "2: Mengikuti pertemuan final"
+                    return 3  # 3 untuk pertemuan final
                 else:
-                    return "4: Tidak Lulus"
+                    return 4  # 4 untuk tidak lulus
             
-            # Terapkan logika ke baris data
+            # Terapkan logika angka ke baris data
             df['Syarat Kelulusan'] = df.apply(hitung_kelulusan, axis=1)
             
-            # Pilih kolom utama untuk ditampilkan di preview
+            # --- FITUR SORTING OTOMATIS ---
+            # Mengurutkan baris data berdasarkan angka Syarat Kelulusan (1 ke 4)
+            df = df.sort_values(by='Syarat Kelulusan', ascending=True).reset_index(drop=True)
+            
+            # Pilih kolom utama untuk ditampilkan di preview UI Streamlit
             df_preview = df[['Nama', 'NIM / NPM', 'Syarat Kelulusan']].copy()
             df_preview['Nama'] = df_preview['Nama'].astype(str).str.title()
             
-            st.subheader("📊 Preview Hasil Logika Kelulusan")
+            st.subheader("📊 Preview Hasil Logika Kelulusan (Sudah Disortir 1-4)")
             st.dataframe(df_preview)
             
             # --- Proses Pembuatan Excel Hasil ---
