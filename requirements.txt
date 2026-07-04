@@ -1,6 +1,7 @@
 streamlit
 numpy
 matplotlib
+adjustText
 pandas
 python-docx
 requests
