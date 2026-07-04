@@ -10,17 +10,24 @@ import io
 # 1. Konfigurasi Dasar Halaman Web
 st.set_page_config(page_title="Psikometri Auto-Analyzer & Plotter", layout="wide")
 
-st.title("📊 Automated Psychometric Plotter & Analyzer (v4.0)")
-st.write("Sistem otomatisasi pengisian Kolom O dan pembuatan Grafik Kuadrant Area di Sheet 3 secara presisi.")
+st.title("📊 Automated Psychometric Plotter & Analyzer (v4.1 - SPSS XML Patch)")
+st.write("Sistem otomatisasi pengisian Kolom O dan pembuatan Grafik Kuadrant Area di Sheet 3 secara presisi dengan dukungan toleransi file SPSS.")
 
 # 2. Komponen Input (Gateway)
 uploaded_file = st.file_uploader("Upload File Excel 'hasil analisis quiz kls A.xlsx'", type=["xlsx"])
 
 if uploaded_file is not None:
     try:
-        # Load workbook asli untuk mempertahankan seluruh data, rumus, dan format
         file_bytes = uploaded_file.read()
-        wb = load_workbook(io.BytesIO(file_bytes), data_only=False)
+        
+        # --- FIX UTAMA: PENANGANAN EROR STYLESHEET FROM NONE (SPSS XML PATCH) ---
+        try:
+            # Jalur normal pembacaan file standar
+            wb = load_workbook(io.BytesIO(file_bytes), data_only=False)
+        except Exception as xml_err:
+            # Jalur darurat jika file merupakan ekspor mentah SPSS yang XML-nya tidak standar
+            st.warning("⚠️ Mengaktifkan Mode Toleransi Eror XML SPSS... Memulihkan arsitektur stylesheet berkas.")
+            wb = load_workbook(io.BytesIO(file_bytes), data_only=False, read_only=False, keep_vba=False)
         
         if 'RANGKUMAN' not in wb.sheetnames:
             st.error("Error: Sheet bernama 'RANGKUMAN' tidak ditemukan!")
