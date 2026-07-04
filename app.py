@@ -2,158 +2,175 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import openpyxl
-from openpyxl.styles import Font, Alignment, PatternFill
-from openpyxl.utils.dataframe import dataframe_to_rows
+from openpyxl import load_workbook
+from openpyxl.drawing.image import Image as OpenpyxlImage
+import matplotlib.pyplot as plt
 import io
-import re
 
-# 1. Konfigurasi Halaman Web
-st.set_page_config(page_title="Psikometri Cell Plotter v8.0", layout="wide")
+# 1. Konfigurasi Dasar Halaman Web
+st.set_page_config(page_title="Psikometri Auto-Analyzer & Plotter", layout="wide")
 
-st.title("📊 Automated Psychometric Cell Plotter (v8.0 - Fresh System)")
-st.write("Sistem Baru: Membaca data aman via Pandas, mengisi data Kolom O, dan memplot nomor aitem (VAR00010 -> 10) langsung ke koordinat sel Sheet 3 tanpa menggunakan berkas rusak.")
+st.title("📊 Automated Psychometric Plotter & Analyzer (v4.0)")
+st.write("Sistem otomatisasi pengisian Kolom O dan pembuatan Grafik Kuadrant Area di Sheet 3 secara presisi.")
 
-# 2. Gateway Input Berkas Excel dari User
-uploaded_file = st.file_uploader("Upload File Excel Analisis Kuis", type=["xlsx"])
+# 2. Komponen Input (Gateway)
+uploaded_file = st.file_uploader("Upload File Excel 'hasil analisis quiz kls A.xlsx'", type=["xlsx"])
 
 if uploaded_file is not None:
     try:
+        # Load workbook asli untuk mempertahankan seluruh data, rumus, dan format
         file_bytes = uploaded_file.read()
+        wb = load_workbook(io.BytesIO(file_bytes), data_only=False)
         
-        # --- LANGKAH 1: BYPASS ENGINE (PANDAS MEMBACA MENTAH DATA EXCEL) ---
-        with st.spinner("Membaca data kuis secara aman via Pandas..."):
-            # Pandas tidak peduli dengan XML stylesheet yang rusak, jadi dijamin 100% lolos eror
+        if 'RANGKUMAN' not in wb.sheetnames:
+            st.error("Error: Sheet bernama 'RANGKUMAN' tidak ditemukan!")
+        else:
+            ws_rangkuman = wb['RANGKUMAN']
+            
+            # Membaca data sekunder lewat pandas untuk kebutuhan kalkulasi & koordinat grafik
             df_calc = pd.read_excel(io.BytesIO(file_bytes), sheet_name='RANGKUMAN', header=0)
             
-        # Fungsi ekstraksi label: VAR00010 -> 10
-        def ekstrak_angka_item(teks_item):
-            match = re.search(r'\d+', str(teks_item))
-            return int(match.group()) if match else str(teks_item)
+            # Helper untuk merapikan nama opsi (A, B, & C)
+            def format_opsi_nama(daftar_opsi):
+                if not daftar_opsi:
+                    return ""
+                if len(daftar_opsi) == 1:
+                    return daftar_opsi[0]
+                if len(daftar_opsi) == 2:
+                    return f"{daftar_opsi[0]} & {daftar_opsi[1]}"
+                return ", ".join(daftar_opsi[:-1]) + f", & {daftar_opsi[-1]}"
 
-        # Helper untuk format nama opsi teks kuis
-        def format_opsi_nama(daftar_opsi):
-            if not daftar_opsi: return ""
-            if len(daftar_opsi) == 1: return daftar_opsi[0]
-            if len(daftar_opsi) == 2: return f"{daftar_opsi[0]} & {daftar_opsi[1]}"
-            return ", ".join(daftar_opsi[:-1]) + f", & {daftar_opsi[-1]}"
-
-        # --- LANGKAH 2: HITUNG LOGIKA DISTRAKTOR PADA KOLOM O ---
-        hasil_kolom_o = [""] # Baris sub-header dikosongkan
-        
-        for idx in range(1, len(df_calc)):
-            row = df_calc.iloc[idx]
-            try:
-                mean_val = float(row.iloc[1]) if pd.notna(row.iloc[1]) else 0.0
-                if mean_val >= 1.0:
-                    hasil_kolom_o.append("Semua Distraktor tidak efektif")
-                    continue
+            # --- PROSES 1: OTOMASI ANALISIS DISTRAKTOR (KOLOM O) ---
+            with st.spinner("Sistem sedang memproses Kolom O berbasis warna kuning KJ..."):
+                for idx in range(1, len(df_calc)):
+                    row = df_calc.iloc[idx]
+                    excel_row_num = idx + 2
                     
-                opsi_pct = {
-                    'A': float(row.iloc[7]) if pd.notna(row.iloc[7]) else 0.0,
-                    'B': float(row.iloc[9]) if pd.notna(row.iloc[9]) else 0.0,
-                    'C': float(row.iloc[11]) if pd.notna(row.iloc[11]) else 0.0,
-                    'D': float(row.iloc[13]) if pd.notna(row.iloc[13]) else 0.0
-                }
-                # Lock KJ menggunakan rumus jarak selisih absolut terdekat dengan Mean
-                kunci_jawaban = min(opsi_pct, key=lambda k: abs(opsi_pct[k] - mean_val))
-            except Exception:
-                hasil_kolom_o.append("")
-                continue
+                    try:
+                        mean_val = float(row.iloc[1]) if pd.notna(row.iloc[1]) else 0.0
+                        if mean_val >= 1.0:
+                            ws_rangkuman.cell(row=excel_row_num, column=15, value="Semua Distraktor tidak efektif")
+                            continue
+                            
+                        opsi_pct = {
+                            'A': float(row.iloc[7]) if pd.notna(row.iloc[7]) else 0.0,
+                            'B': float(row.iloc[9]) if pd.notna(row.iloc[9]) else 0.0,
+                            'C': float(row.iloc[11]) if pd.notna(row.iloc[11]) else 0.0,
+                            'D': float(row.iloc[13]) if pd.notna(row.iloc[13]) else 0.0
+                        }
+                        
+                        kolom_mapping = {'A': 7, 'B': 9, 'C': 11, 'D': 13}
+                        kunci_jawaban = None
+                        for opsi, col_idx in kolom_mapping.items():
+                            cell_obj = ws_rangkuman.cell(row=excel_row_num, column=col_idx)
+                            cell_warna = str(cell_obj.fill.start_color.rgb).upper().strip()
+                            if cell_obj.fill.fill_type is not None and cell_warna not in ['00000000', '000000', 'FFFFFFFF', 'NONE', 'INDEXED']:
+                                kunci_jawaban = opsi
+                                break
+                        
+                        if not kunci_jawaban:
+                            kunci_jawaban = min(opsi_pct, key=lambda k: abs(opsi_pct[k] - mean_val))
+                    except Exception:
+                        continue
 
-            if max(opsi_pct.values()) == 0.0:
-                hasil_kolom_o.append("Semua Distraktor tidak efektif")
-                continue
+                    if max(opsi_pct.values()) == 0.0:
+                        ws_rangkuman.cell(row=excel_row_num, column=15, value="Semua Distraktor tidak efektif")
+                        continue
 
-            tidak_efektif, cukup_efektif, sangat_efektif, overpowered = [], [], [], []
-            for opsi, pct in opsi_pct.items():
-                if opsi == kunci_jawaban: continue
-                if pct > opsi_pct[kunci_jawaban]: overpowered.append(opsi)
-                elif mean_val >= 0.90 and pct > 0: cukup_efektif.append(opsi)
-                elif pct >= 0.10: sangat_efektif.append(opsi)
-                elif pct >= 0.05: cukup_efektif.append(opsi)
-                else: tidak_efektif.append(opsi)
+                    tidak_efektif, cukup_efektif, sangat_efektif, overpowered = [], [], [], []
+                    for opsi, pct in opsi_pct.items():
+                        if opsi == kunci_jawaban: continue
+                        if pct > opsi_pct[kunci_jawaban]: overpowered.append(opsi)
+                        elif mean_val >= 0.90 and pct > 0: cukup_efektif.append(opsi)
+                        elif pct >= 0.10: sangat_efektif.append(opsi)
+                        elif pct >= 0.05: cukup_efektif.append(opsi)
+                        else: tidak_efektif.append(opsi)
 
-            kalimat_final = []
-            if overpowered: kalimat_final.append(f"Disatraktor {format_opsi_nama(overpowered)} sangat efektif bahkan cenderung dipilih dibanding kunci jawaban")
-            if sangat_efektif: kalimat_final.append(f"Distraktor {format_opsi_nama(sangat_efektif)} sangat efektif")
-            if cukup_efektif: kalimat_final.append(f"Distraktor {format_opsi_nama(cukup_efektif)} cukup efektif")
-            if tidak_efektif: kalimat_final.append(f"Distraktor {format_opsi_nama(tidak_efektif)} tidak efektif")
+                    kalimat_final = []
+                    if overpowered: kalimat_final.append(f"Disatraktor {format_opsi_nama(overpowered)} sangat efektif bahkan cenderung dipilih dibanding kunci jawaban")
+                    if sangat_efektif: kalimat_final.append(f"Distraktor {format_opsi_nama(sangat_efektif)} sangat efektif")
+                    if cukup_efektif: kalimat_final.append(f"Distraktor {format_opsi_nama(cukup_efektif)} cukup efektif")
+                    if tidak_efektif: kalimat_final.append(f"Distraktor {format_opsi_nama(tidak_efektif)} tidak efektif")
 
-            text_kesimpulan = "; ".join(kalimat_final) if overpowered else ", ".join(kalimat_final)
-            hasil_kolom_o.append(text_kesimpulan)
+                    text_kesimpulan = "; ".join(kalimat_final) if overpowered else ", ".join(kalimat_final)
+                    ws_rangkuman.cell(row=excel_row_num, column=15, value=text_kesimpulan)
 
-        df_calc['Analisis Distraktor'] = hasil_kolom_o
-
-        # --- LANGKAH 3: MEMBUAT BERKAS WORKBOOK EXCEL BARU YANG STERIL ---
-        wb_new = openpyxl.Workbook()
-        
-        # Lembar Kerja 1: RANGKUMAN
-        ws1 = wb_new.active
-        ws1.title = "RANGKUMAN"
-        
-        # Pindahkan data bersih dari Pandas ke sheet baru
-        for r_idx, row in enumerate(dataframe_to_rows(df_calc, index=False, header=True), 1):
-            for c_idx, value in enumerate(row, 1):
-                ws1.cell(row=r_idx, column=c_idx, value=value)
-
-        # Lembar Kerja 2: GRAFIK POSISI AITEM (Membuat Grid Baru)
-        ws2 = wb_new.create_sheet(title="GRAFIK POSISI AITEM")
-        
-        # Layout Judul Header di Sheet 3
-        ws2["B2"] = "PETA SEBARAN MATRIKS KUALITAS AITEM"
-        ws2["B2"].font = Font(size=14, bold=True, name="Arial")
-        ws2["B3"] = "Koordinat ditentukan berdasarkan: Sumbu Horizontal (X) = Mean | Sumbu Vertikal (Y) = CITC"
-        ws2["B3"].font = Font(size=10, italic=True, name="Arial")
-
-        # Ambil hanya item soal valid yang mengandung teks 'VAR'
-        df_clean = df_calc.dropna(subset=['No Item', 'Mean', 'Corrected Item-Total Correlation']).copy()
-        df_clean = df_clean[df_clean['No Item'].str.contains('VAR', na=False)]
-
-        # --- PROCESSOR PEMETAAN KOORDINAT SEL (ANTI-MENIMPA) ---
-        with st.spinner("Memetakan nomor butir soal ke dalam grid sel Sheet 3..."):
-            for _, row in df_clean.iterrows():
-                label_singkat = ekstrak_angka_item(row['No Item'])
-                mean_val = float(row['Mean'])
-                citc_val = float(row['Corrected Item-Total Correlation'])
+            # --- PROSES 2: AUTOMATED GRAPHIC PLOTTER KHUSUS SHEET 3 ---
+            with st.spinner("Sistem sedang menggambar dan menyuntikkan Grafik Area ke Sheet 3..."):
+                # 1. Bersihkan data untuk plotting grafik (Hapus baris kosong/sub-header)
+                df_clean = df_calc.dropna(subset=['No Item', 'Mean', 'Corrected Item-Total Correlation']).copy()
+                df_clean = df_clean[df_clean['No Item'].str.contains('VAR', na=False)]
                 
-                # RUMUS KONVERSI MATEMATIKA KE SEL GRID EXCEL:
-                # Nilai Mean (0.0 sampai 1.0) dikonversi proporsional ke Kolom E sampai O (Kolom 5 s/d 15)
-                target_col = int(5 + (mean_val * 10))
+                # 2. Konfigurasi Kanvas Grafik Baru
+                fig, ax = plt.subplots(figsize=(12, 9))
                 
-                # Nilai CITC (0.8 turun ke -0.2) dikonversi proporsional ke Baris 6 s/d 26
-                target_row = int(6 + ((0.8 - citc_val) * 20))
+                # 3. Plot Seluruh 85 Koordinat Aitem (Bentuk Bintang Oranye Ukuran Besar)
+                ax.scatter(df_clean['Corrected Item-Total Correlation'], df_clean['Mean'], 
+                           color='#FF8C00', marker='*', s=150, edgecolor='black', linewidth=0.5, label='Butir Soal')
                 
-                # Kunci pengaman koordinat agar tidak keluar dari perimeter grid chart
-                target_col = max(5, min(15, target_col))
-                target_row = max(6, min(26, target_row))
+                # 4. Membuat Garis Batas Kuadrant Sesuai Rumus Teori Dosen
+                ax.axhline(y=0.5, color='red', linestyle='--', alpha=0.6, linewidth=1.5, label='Batas Batas Kesulitan (Mean = 0.50)')
+                ax.axvline(x=0.3, color='blue', linestyle='--', alpha=0.6, linewidth=1.5, label='Batas Daya Beda (Korelasi = 0.30)')
+                ax.axvline(x=0.2, color='purple', linestyle=':', alpha=0.5, linewidth=1.2, label='Batas Batas Minimum Gugur (Korelasi = 0.20)')
                 
-                # Baca isi sel tujuan saat ini
-                current_val = ws2.cell(row=target_row, column=target_col).value
+                # 5. Melabeli Setiap Titik Soal Secara Otomatis (VAR00001 - VAR00085)
+                for _, row in df_clean.iterrows():
+                    ax.annotate(str(row['No Item']), 
+                                (float(row['Corrected Item-Total Correlation']), float(row['Mean'])),
+                                textcoords="offset points", 
+                                xytext=(0, 6), 
+                                ha='center', 
+                                fontsize=7, 
+                                fontweight='semibold')
                 
-                # SYARAT UTAMA: Jika koordinat sel sudah ada nilainya, gabungkan dengan koma agar tidak menimpa!
-                if current_val:
-                    ws2.cell(row=target_row, column=target_col, value=f"{current_val}, {label_singkat}")
+                # Dekorasi Estetika Grafik Kartesius
+                ax.set_title("PETA KEDUDUKAN KUALITAS AITEM QUIZ (AUTOMATED CLUSTERING)", fontsize=14, fontweight='bold', pad=15)
+                ax.set_xlabel("Daya Beda (Corrected Item-Total Correlation)", fontsize=11, fontweight='bold', labelpad=10)
+                ax.set_ylabel("Tingkat Kesulitan (Mean)", fontsize=11, fontweight='bold', labelpad=10)
+                ax.set_xlim(-0.3, 0.8) # Mengakomodasi item bernilai korelasi minus (seperti VAR010)
+                ax.set_ylim(-0.05, 1.05)
+                ax.grid(True, linestyle=':', alpha=0.5)
+                ax.legend(loc='lower right', fontsize=9)
+                
+                # Teks Penanda Area Kuadrant pada Bidang Grafik
+                ax.text(0.5, 0.8, 'AREA F\n(Diterima Prima)', fontsize=12, color='green', alpha=0.7, fontweight='bold', ha='center')
+                ax.text(0.1, 0.8, 'AREA E\n(Soal Mudah / Revisi)', fontsize=12, color='darkorange', alpha=0.7, fontweight='bold', ha='center')
+                ax.text(0.5, 0.2, 'AREA D\n(Soal Sukar / Cukup)', fontsize=12, color='blue', alpha=0.7, fontweight='bold', ha='center')
+                ax.text(-0.15, 0.5, 'WILAYAH\nGUGUR', fontsize=12, color='red', alpha=0.7, fontweight='bold', ha='center')
+                
+                plt.tight_layout()
+                
+                # 6. Simpan Grafik ke Objek Memori (Bytes Stream)
+                img_buf = io.BytesIO()
+                plt.savefig(img_buf, format='png', dpi=180)
+                img_buf.seek(0)
+                plt.close(fig)
+                
+                # 7. Ambil Target Sheet 3 (Gunakan Sheet yang ada atau buat baru jika terhapus)
+                if 'GRAFIK POSISI AITEM' in wb.sheetnames:
+                    ws_sheet3 = wb['GRAFIK POSISI AITEM']
+                    # Bersihkan objek gambar lama jika ada agar tidak menumpuk double
+                    ws_sheet3._images.clear() 
                 else:
-                    ws2.cell(row=target_row, column=target_col, value=label_singkat)
+                    ws_sheet3 = wb.create_sheet(title='GRAFIK POSISI AITEM')
                 
-                # Hias sel titik koordinat agar rapi dan kontras
-                ws2.cell(row=target_row, column=target_col).font = Font(bold=True, color="000000", name="Arial")
-                ws2.cell(row=target_row, column=target_col).alignment = Alignment(horizontal="center")
-                ws2.cell(row=target_row, column=target_col).fill = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
+                # 8. Suntikkan Gambar Grafik Baru Tepat Mulai Cell B3 di Sheet 3
+                xl_img = OpenpyxlImage(img_buf)
+                ws_sheet3.add_image(xl_img, 'B3')
 
-        # --- LANGKAH 4: PROSES EKSPOR DAN GENERATE FILE ---
-        output = io.BytesIO()
-        wb_new.save(output)
-        processed_data = output.getvalue()
-        
-        st.success("Sukses Total! Masalah arsitektur file Excel bawaan SPSS berhasil di-bypass.")
-        
-        st.download_button(
-            label="📥 Download Excel Hasil Pemrosesan Baru (100% Bersih)",
-            data=processed_data,
-            file_name="hasil_analisis_quiz_KLS_A_FIXED_TOTAL.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+            st.success("Sukses Mutlak! Kolom O Terisi dan Grafik Kuadrant Sheet 3 Selesai Dirender Otomatis.")
+
+            # 9. Export Gateway
+            output = io.BytesIO()
+            wb.save(output)
+            processed_data = output.getvalue()
+
+            st.download_button(
+                label="📥 Download Excel Hasil Pemrosesan Final (Kolom O + Grafik Sheet 3 Aman)",
+                data=processed_data,
+                file_name="hasil_analisis_quiz_kls_A_FINAL_ALL_SHEETS.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
     except Exception as e:
-        st.error(f"Eror Kritis Sistem: {e}. Pastikan file input sesuai.")
+        st.error(f"Error Deteksi Sistem: {e}. Pastikan format file Excel sesuai.")
