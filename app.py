@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import openpyxl
-from openpyxl.load_workbook import load_workbook
+from openpyxl import load_workbook  # <-- Hapus ".load_workbook" di tengahnya
 from openpyxl.drawing.image import Image as OpenpyxlImage
 import matplotlib.pyplot as plt
 from adjustText import adjust_text  # <-- SOLUSI UTAMA AGAR LABEL TIDAK MENUMPUK
