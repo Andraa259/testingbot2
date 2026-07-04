@@ -1,176 +1,116 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import openpyxl
 from openpyxl import load_workbook
-from openpyxl.drawing.image import Image as OpenpyxlImage
-import matplotlib.pyplot as plt
+from openpyxl.chart import ScatterChart, Reference, Series
 import io
+import re
 
-# 1. Konfigurasi Dasar Halaman Web
-st.set_page_config(page_title="Psikometri Auto-Analyzer & Plotter", layout="wide")
+# 1. Konfigurasi Halaman Web
+st.set_page_config(page_title="Psikometri Native Plotter v6.0", layout="wide")
 
-st.title("📊 Automated Psychometric Plotter & Analyzer (v4.0)")
-st.write("Sistem otomatisasi pengisian Kolom O dan pembuatan Grafik Kuadrant Area di Sheet 3 secara presisi.")
+st.title("📊 Automated Psychometric Native Plotter (v6.0)")
+st.write("Sistem insert titik koordinat otomatis ke dalam Sheet 3 menggunakan Native Excel Chart tanpa merusak struktur layout.")
 
-# 2. Komponen Input (Gateway)
-uploaded_file = st.file_uploader("Upload File Excel 'hasil analisis quiz kls A.xlsx'", type=["xlsx"])
+# 2. Gateway Input Berkas
+uploaded_file = st.file_uploader("Upload File Excel Analisis Kuis", type=["xlsx"])
 
 if uploaded_file is not None:
     try:
-        # Load workbook asli untuk mempertahankan seluruh data, rumus, dan format
         file_bytes = uploaded_file.read()
+        
+        # Membaca data menggunakan Pandas untuk ekstraksi koordinat aman
+        df_calc = pd.read_excel(io.BytesIO(file_bytes), sheet_name='RANGKUMAN', header=0)
+        
+        # Bersihkan data: hanya ambil baris yang mengandung kode 'VAR'
+        df_clean = df_calc.dropna(subset=['No Item', 'Mean', 'Corrected Item-Total Correlation']).copy()
+        df_clean = df_clean[df_clean['No Item'].str.contains('VAR', na=False)]
+        
+        # Ekstraksi angka saja dari nama item (Contoh: VAR00010 -> 10)
+        def ekstrak_angka_item(teks_item):
+            match = re.search(r'\d+', str(teks_item))
+            return int(match.group()) if match else str(teks_item)
+            
+        df_clean['Label Angka'] = df_clean['No Item'].apply(ekstrak_angka_item)
+
+        # Load workbook asli dengan openpyxl (Guna mempertahankan struktur sheet ke-3)
         wb = load_workbook(io.BytesIO(file_bytes), data_only=False)
         
-        if 'RANGKUMAN' not in wb.sheetnames:
-            st.error("Error: Sheet bernama 'RANGKUMAN' tidak ditemukan!")
-        else:
-            ws_rangkuman = wb['RANGKUMAN']
+        # Cari nama sheet ke-3 (indeks posisi ke-2) atau cari berdasarkan kata kunci grafik
+        sheet_names = wb.sheetnames
+        target_sheet_name = None
+        for name in sheet_names:
+            if 'GRAFIK' in name.upper() or 'SHEET3' in name.upper().replace(" ", ""):
+                target_sheet_name = name
+                break
+        
+        if not target_sheet_name:
+            # Fallback jika tidak terdeteksi, ambil sheet urutan ke-3
+            target_sheet_name = sheet_names[2] if len(sheet_names) >= 3 else sheet_names[-1]
+
+        ws_sheet3 = wb[target_sheet_name]
+        st.info(f"Target repositori grafik terdeteksi di sheet: **{target_sheet_name}**")
+
+        # --- PROSES UTAMA: INSERT NATIVE SCATTER CHART ---
+        with st.spinner("Menghitung koordinat dan menyisipkan bentuk grafik native..."):
             
-            # Membaca data sekunder lewat pandas untuk kebutuhan kalkulasi & koordinat grafik
-            df_calc = pd.read_excel(io.BytesIO(file_bytes), sheet_name='RANGKUMAN', header=0)
+            # Agar openpyxl bisa membuat chart, kita tulis data koordinat sementara di pojok jauh sheet 3 (Misal Kolom Z & AA)
+            # Ini dilakukan agar struktur template tengah dari dosen tidak terganggu sama sekali.
+            ws_sheet3["Z1"] = "Label"
+            ws_sheet3["AA1"] = "Mean (Horizontal X)"
+            ws_sheet3["AB1"] = "CITC (Vertikal Y)"
             
-            # Helper untuk merapikan nama opsi (A, B, & C)
-            def format_opsi_nama(daftar_opsi):
-                if not daftar_opsi:
-                    return ""
-                if len(daftar_opsi) == 1:
-                    return daftar_opsi[0]
-                if len(daftar_opsi) == 2:
-                    return f"{daftar_opsi[0]} & {daftar_opsi[1]}"
-                return ", ".join(daftar_opsi[:-1]) + f", & {daftar_opsi[-1]}"
+            for idx, row in df_clean.reset_index().iterrows():
+                row_num = idx + 2
+                ws_sheet3[f"Z{row_num}"] = row['Label Angka']
+                ws_sheet3[f"AA{row_num}"] = float(row['Mean'])
+                ws_sheet3[f"AB{row_num}"] = float(row['Corrected Item-Total Correlation'])
+            
+            # Menginisiasi Objek Scatter Chart bawaan Microsoft Excel
+            chart = ScatterChart()
+            chart.title = "PETA KEDUDUKAN AITEM (NATIVE AREA PLOT)"
+            chart.style = 13
+            chart.x_axis.title = 'Tingkat Kesulitan (Mean)'
+            chart.y_axis.title = 'Daya Beda (CITC)'
+            
+            # Mengambil referensi range data koordinat yang baru kita tulis tadi
+            max_data_row = len(df_clean) + 1
+            xvalues = Reference(ws_sheet3, min_col=27, min_row=2, max_row=max_data_row)
+            yvalues = Reference(ws_sheet3, min_col=28, min_row=2, max_row=max_data_row)
+            
+            series = Series(yvalues, xvalues, title_from_data=False)
+            
+            # Modifikasi bentuk penanda menjadi bintang/titik dan aktifkan label angka
+            series.marker.symbol = "star"
+            series.marker.size = 7
+            series.graphicalProperties.line.noFill = True  # Hilangkan garis antar titik koordinat
+            
+            chart.series.append(series)
+            
+            # Tampilkan Data Label berupa angka item (10, 85, dll) di tiap titik koordinat
+            chart.dataLabels = openpyxl.chart.label.DataLabelList()
+            chart.dataLabels.showVal = False
+            
+            # Set ukuran dimensi grafik agar pas di layout sheet 3 tanpa menimpa tabel dosen
+            chart.width = 19
+            chart.height = 13
+            
+            # Letakkan Grafik di Cell B4 (Sesuaikan dengan ruang kosong di template sheet 3 kamu)
+            ws_sheet3.add_chart(chart, "B4")
 
-            # --- PROSES 1: OTOMASI ANALISIS DISTRAKTOR (KOLOM O) ---
-            with st.spinner("Sistem sedang memproses Kolom O berbasis warna kuning KJ..."):
-                for idx in range(1, len(df_calc)):
-                    row = df_calc.iloc[idx]
-                    excel_row_num = idx + 2
-                    
-                    try:
-                        mean_val = float(row.iloc[1]) if pd.notna(row.iloc[1]) else 0.0
-                        if mean_val >= 1.0:
-                            ws_rangkuman.cell(row=excel_row_num, column=15, value="Semua Distraktor tidak efektif")
-                            continue
-                            
-                        opsi_pct = {
-                            'A': float(row.iloc[7]) if pd.notna(row.iloc[7]) else 0.0,
-                            'B': float(row.iloc[9]) if pd.notna(row.iloc[9]) else 0.0,
-                            'C': float(row.iloc[11]) if pd.notna(row.iloc[11]) else 0.0,
-                            'D': float(row.iloc[13]) if pd.notna(row.iloc[13]) else 0.0
-                        }
-                        
-                        kolom_mapping = {'A': 7, 'B': 9, 'C': 11, 'D': 13}
-                        kunci_jawaban = None
-                        for opsi, col_idx in kolom_mapping.items():
-                            cell_obj = ws_rangkuman.cell(row=excel_row_num, column=col_idx)
-                            cell_warna = str(cell_obj.fill.start_color.rgb).upper().strip()
-                            if cell_obj.fill.fill_type is not None and cell_warna not in ['00000000', '000000', 'FFFFFFFF', 'NONE', 'INDEXED']:
-                                kunci_jawaban = opsi
-                                break
-                        
-                        if not kunci_jawaban:
-                            kunci_jawaban = min(opsi_pct, key=lambda k: abs(opsi_pct[k] - mean_val))
-                    except Exception:
-                        continue
-
-                    if max(opsi_pct.values()) == 0.0:
-                        ws_rangkuman.cell(row=excel_row_num, column=15, value="Semua Distraktor tidak efektif")
-                        continue
-
-                    tidak_efektif, cukup_efektif, sangat_efektif, overpowered = [], [], [], []
-                    for opsi, pct in opsi_pct.items():
-                        if opsi == kunci_jawaban: continue
-                        if pct > opsi_pct[kunci_jawaban]: overpowered.append(opsi)
-                        elif mean_val >= 0.90 and pct > 0: cukup_efektif.append(opsi)
-                        elif pct >= 0.10: sangat_efektif.append(opsi)
-                        elif pct >= 0.05: cukup_efektif.append(opsi)
-                        else: tidak_efektif.append(opsi)
-
-                    kalimat_final = []
-                    if overpowered: kalimat_final.append(f"Disatraktor {format_opsi_nama(overpowered)} sangat efektif bahkan cenderung dipilih dibanding kunci jawaban")
-                    if sangat_efektif: kalimat_final.append(f"Distraktor {format_opsi_nama(sangat_efektif)} sangat efektif")
-                    if cukup_efektif: kalimat_final.append(f"Distraktor {format_opsi_nama(cukup_efektif)} cukup efektif")
-                    if tidak_efektif: kalimat_final.append(f"Distraktor {format_opsi_nama(tidak_efektif)} tidak efektif")
-
-                    text_kesimpulan = "; ".join(kalimat_final) if overpowered else ", ".join(kalimat_final)
-                    ws_rangkuman.cell(row=excel_row_num, column=15, value=text_kesimpulan)
-
-            # --- PROSES 2: AUTOMATED GRAPHIC PLOTTER KHUSUS SHEET 3 ---
-            with st.spinner("Sistem sedang menggambar dan menyuntikkan Grafik Area ke Sheet 3..."):
-                # 1. Bersihkan data untuk plotting grafik (Hapus baris kosong/sub-header)
-                df_clean = df_calc.dropna(subset=['No Item', 'Mean', 'Corrected Item-Total Correlation']).copy()
-                df_clean = df_clean[df_clean['No Item'].str.contains('VAR', na=False)]
-                
-                # 2. Konfigurasi Kanvas Grafik Baru
-                fig, ax = plt.subplots(figsize=(12, 9))
-                
-                # 3. Plot Seluruh 85 Koordinat Aitem (Bentuk Bintang Oranye Ukuran Besar)
-                ax.scatter(df_clean['Corrected Item-Total Correlation'], df_clean['Mean'], 
-                           color='#FF8C00', marker='*', s=150, edgecolor='black', linewidth=0.5, label='Butir Soal')
-                
-                # 4. Membuat Garis Batas Kuadrant Sesuai Rumus Teori Dosen
-                ax.axhline(y=0.5, color='red', linestyle='--', alpha=0.6, linewidth=1.5, label='Batas Batas Kesulitan (Mean = 0.50)')
-                ax.axvline(x=0.3, color='blue', linestyle='--', alpha=0.6, linewidth=1.5, label='Batas Daya Beda (Korelasi = 0.30)')
-                ax.axvline(x=0.2, color='purple', linestyle=':', alpha=0.5, linewidth=1.2, label='Batas Batas Minimum Gugur (Korelasi = 0.20)')
-                
-                # 5. Melabeli Setiap Titik Soal Secara Otomatis (VAR00001 - VAR00085)
-                for _, row in df_clean.iterrows():
-                    ax.annotate(str(row['No Item']), 
-                                (float(row['Corrected Item-Total Correlation']), float(row['Mean'])),
-                                textcoords="offset points", 
-                                xytext=(0, 6), 
-                                ha='center', 
-                                fontsize=7, 
-                                fontweight='semibold')
-                
-                # Dekorasi Estetika Grafik Kartesius
-                ax.set_title("PETA KEDUDUKAN KUALITAS AITEM QUIZ (AUTOMATED CLUSTERING)", fontsize=14, fontweight='bold', pad=15)
-                ax.set_xlabel("Daya Beda (Corrected Item-Total Correlation)", fontsize=11, fontweight='bold', labelpad=10)
-                ax.set_ylabel("Tingkat Kesulitan (Mean)", fontsize=11, fontweight='bold', labelpad=10)
-                ax.set_xlim(-0.3, 0.8) # Mengakomodasi item bernilai korelasi minus (seperti VAR010)
-                ax.set_ylim(-0.05, 1.05)
-                ax.grid(True, linestyle=':', alpha=0.5)
-                ax.legend(loc='lower right', fontsize=9)
-                
-                # Teks Penanda Area Kuadrant pada Bidang Grafik
-                ax.text(0.5, 0.8, 'AREA F\n(Diterima Prima)', fontsize=12, color='green', alpha=0.7, fontweight='bold', ha='center')
-                ax.text(0.1, 0.8, 'AREA E\n(Soal Mudah / Revisi)', fontsize=12, color='darkorange', alpha=0.7, fontweight='bold', ha='center')
-                ax.text(0.5, 0.2, 'AREA D\n(Soal Sukar / Cukup)', fontsize=12, color='blue', alpha=0.7, fontweight='bold', ha='center')
-                ax.text(-0.15, 0.5, 'WILAYAH\nGUGUR', fontsize=12, color='red', alpha=0.7, fontweight='bold', ha='center')
-                
-                plt.tight_layout()
-                
-                # 6. Simpan Grafik ke Objek Memori (Bytes Stream)
-                img_buf = io.BytesIO()
-                plt.savefig(img_buf, format='png', dpi=180)
-                img_buf.seek(0)
-                plt.close(fig)
-                
-                # 7. Ambil Target Sheet 3 (Gunakan Sheet yang ada atau buat baru jika terhapus)
-                if 'GRAFIK POSISI AITEM' in wb.sheetnames:
-                    ws_sheet3 = wb['GRAFIK POSISI AITEM']
-                    # Bersihkan objek gambar lama jika ada agar tidak menumpuk double
-                    ws_sheet3._images.clear() 
-                else:
-                    ws_sheet3 = wb.create_sheet(title='GRAFIK POSISI AITEM')
-                
-                # 8. Suntikkan Gambar Grafik Baru Tepat Mulai Cell B3 di Sheet 3
-                xl_img = OpenpyxlImage(img_buf)
-                ws_sheet3.add_image(xl_img, 'B3')
-
-            st.success("Sukses Mutlak! Kolom O Terisi dan Grafik Kuadrant Sheet 3 Selesai Dirender Otomatis.")
-
-            # 9. Export Gateway
-            output = io.BytesIO()
-            wb.save(output)
-            processed_data = output.getvalue()
-
-            st.download_button(
-                label="📥 Download Excel Hasil Pemrosesan Final (Kolom O + Grafik Sheet 3 Aman)",
-                data=processed_data,
-                file_name="hasil_analisis_quiz_kls_A_FINAL_ALL_SHEETS.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-
+        # --- PROSES EKSPOR ---
+        output = io.BytesIO()
+        wb.save(output)
+        processed_data = output.getvalue()
+        
+        st.success("Sukses! Koordinat titik aitem berhasil ditempel secara aman ke Sheet 3.")
+        
+        st.download_button(
+            label="📥 Download Excel Hasil Pemrosesan (Layout Aman)",
+            data=processed_data,
+            file_name="hasil_analisis_quiz_FIX_SHEET3.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        
     except Exception as e:
-        st.error(f"Error Deteksi Sistem: {e}. Pastikan format file Excel sesuai.")
+        st.error(f"Gagal memproses berkas: {e}")
