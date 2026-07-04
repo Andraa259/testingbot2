@@ -2,17 +2,18 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import openpyxl
-from openpyxl import load_workbook
+from openpyxl.load_workbook import load_workbook
 from openpyxl.drawing.image import Image as OpenpyxlImage
 import matplotlib.pyplot as plt
+from adjustText import adjust_text  # <-- SOLUSI UTAMA AGAR LABEL TIDAK MENUMPUK
 import io
 import re
 
 # 1. Konfigurasi Dasar Halaman Web
 st.set_page_config(page_title="Psikometri Auto-Analyzer & Plotter", layout="wide")
 
-st.title("📊 Automated Psychometric Plotter & Analyzer (v4.6 - Evaluasi 1)")
-st.write("Sistem otomatisasi Kolom O dan pembuatan Grafik Kuadrant Berdasarkan Aturan Evaluasi 1 Dosen.")
+st.title("📊 Automated Psychometric Plotter & Analyzer (v4.7 - Evaluasi 2)")
+st.write("Sistem otomatisasi Kolom O dan pembuatan Grafik Kuadrant Area Sheet 3 bebas tumpukan label.")
 
 # 2. Komponen Input (Gateway)
 uploaded_file = st.file_uploader("Upload File Excel 'hasil analisis quiz kls A.xlsx'", type=["xlsx"])
@@ -96,8 +97,8 @@ if uploaded_file is not None:
                     text_kesimpulan = "; ".join(kalimat_final) if overpowered else ", ".join(kalimat_final)
                     ws_rangkuman.cell(row=excel_row_num, column=15, value=text_kesimpulan)
 
-            # --- PROSES 2: AUTOMATED GRAPHIC PLOTTER KHUSUS SHEET 3 (EVALUASI 1) ---
-            with st.spinner("Sistem sedang menggambar Grafik Evaluasi 1 ke Sheet 3..."):
+            # --- PROSES 2: AUTOMATED GRAPHIC PLOTTER KHUSUS SHEET 3 (EVALUASI 2) ---
+            with st.spinner("Sistem sedang merender grafik anti-tabrakan label..."):
                 df_clean = df_calc.dropna(subset=['No Item', 'Mean', 'Corrected Item-Total Correlation']).copy()
                 df_clean = df_clean[df_clean['No Item'].str.contains('VAR', na=False)]
                 
@@ -110,69 +111,68 @@ if uploaded_file is not None:
                 
                 df_clean['Label_Singkat'] = df_clean['No Item'].apply(pangkas_label_item)
                 
-                fig, ax = plt.subplots(figsize=(13, 10))
+                fig, ax = plt.subplots(figsize=(14, 11))
                 
-                # PENTING: Sumbu Horizontal = Mean, Sumbu Vertikal = CITC (Korelasi)
-                # Sumbu X (Horizontal): Rentang 0.0 - 1.0 dengan interval 0.1
-                # Sumbu Y (Vertikal): Rentang -0.5 - 1.0 dengan interval 0.1
+                # Tentukan skala interval sumbu 0.1 pas
                 ax.set_xticks(np.arange(0.0, 1.1, 0.1))
                 ax.set_yticks(np.arange(-0.5, 1.1, 0.1))
                 
-                # SYARAT EVALUASI 1: Balik arah horizontal dari KANAN KE KIRI (0 di kanan, 1 di kiri)
+                # Arah horizontal KANAN KE KIRI (Bawaan Evaluasi 1)
                 ax.set_xlim(1.05, -0.05)
                 ax.set_ylim(-0.55, 1.05)
                 
-                # Gambar Garis Bantu Batas Wilayah A, B, C, D, E, F secara visual
-                # Batas Vertikal Utama (Horizontal X di Grafik)
-                ax.axvline(x=0.3, color='black', linestyle=':', alpha=0.4)
-                ax.axvline(x=0.7, color='black', linestyle=':', alpha=0.4)
-                # Batas Horizontal Utama (Vertikal Y di Grafik)
-                ax.axhline(y=0.3, color='black', linestyle=':', alpha=0.4)
+                # Garis bantu batas wilayah
+                ax.axvline(x=0.3, color='black', linestyle=':', alpha=0.3)
+                ax.axvline(x=0.7, color='black', linestyle=':', alpha=0.3)
+                ax.axhline(y=0.3, color='black', linestyle=':', alpha=0.3)
                 
-                # Plot Titik Soal (Bintang Oranye)
-                ax.scatter(df_clean['Mean'], df_clean['Corrected Item-Total Correlation'], 
-                           color='#FF8C00', marker='*', s=160, edgecolor='black', linewidth=0.5, label='Butir Soal')
+                # Plot Titik Bintang Oranye
+                scatter = ax.scatter(df_clean['Mean'], df_clean['Corrected Item-Total Correlation'], 
+                                     color='#FF8C00', marker='*', s=160, edgecolor='black', linewidth=0.5, label='Butir Soal')
                 
-                # Labeling teks ringkas di atas titik
+                # Tampung semua objek text label ke dalam array list
+                texts = []
                 for _, row in df_clean.iterrows():
-                    ax.annotate(row['Label_Singkat'], 
-                                (float(row['Mean']), float(row['Corrected Item-Total Correlation'])),
-                                textcoords="offset points", 
-                                xytext=(0, 6), 
-                                ha='center', 
-                                fontsize=8, 
-                                fontweight='bold')
+                    # Set koordinat teks di kanan titik asal (x - 0.015 karena grafiknya di-reverse kanan ke kiri)
+                    t = ax.text(float(row['Mean']) - 0.015, float(row['Corrected Item-Total Correlation']), 
+                                row['Label_Singkat'], fontsize=8.5, fontweight='bold', color='black')
+                    texts.append(t)
                 
-                # Teks Penempatan Wilayah Evaluasi 1 di Titik Tengah Masing-Masing Bidang
-                # Wilayah A (0.3 - 0.7, 0.3 - 1.0)
-                ax.text(0.5, 0.65, 'WILAYAH A', fontsize=12, fontweight='bold', color='darkgreen', ha='center', va='center', bbox=dict(facecolor='white', alpha=0.6, edgecolor='none'))
-                # Wilayah B (0.0 - 0.3, 0.3 - 1.0)
-                ax.text(0.15, 0.65, 'WILAYAH B', fontsize=12, fontweight='bold', color='navy', ha='center', va='center', bbox=dict(facecolor='white', alpha=0.6, edgecolor='none'))
-                # Wilayah C (0.0 - 0.3, 0.0 - 0.3)
-                ax.text(0.15, 0.15, 'WILAYAH C', fontsize=12, fontweight='bold', color='crimson', ha='center', va='center', bbox=dict(facecolor='white', alpha=0.6, edgecolor='none'))
-                # Wilayah D (0.3 - 0.7, 0.0 - 0.3)
-                ax.text(0.5, 0.15, 'WILAYAH D', fontsize=12, fontweight='bold', color='purple', ha='center', va='center', bbox=dict(facecolor='white', alpha=0.6, edgecolor='none'))
-                # Wilayah E (0.7 - 1.0, 0.0 - 0.3)
-                ax.text(0.85, 0.15, 'WILAYAH E', fontsize=12, fontweight='bold', color='darkorange', ha='center', va='center', bbox=dict(facecolor='white', alpha=0.6, edgecolor='none'))
-                # Wilayah F (0.7 - 1.0, 0.3 - 1.0)
-                ax.text(0.85, 0.65, 'WILAYAH F', fontsize=12, fontweight='bold', color='teal', ha='center', va='center', bbox=dict(facecolor='white', alpha=0.6, edgecolor='none'))
+                # --- ALGORITMA ANTI-TUMPUKAN (ADJUST_TEXT ENGINE) ---
+                # Menggerakkan teks secara dinamis agar menjauh dari tumpukan titik & teks lain, dengan tetap dominan di kanan
+                adjust_text(texts, 
+                            x=df_clean['Mean'].values, 
+                            y=df_clean['Corrected Item-Total Correlation'].values,
+                            force_text=(0.2, 0.4), 
+                            force_points=(0.2, 0.4),
+                            expand_points=(1.2, 1.2),
+                            expand_text=(1.2, 1.2),
+                            arrowprops=dict(arrowstyle="-", color='gray', alpha=0.4, linewidth=0.6))
+
+                # Teks Penempatan Penanda Wilayah
+                ax.text(0.5, 0.65, 'WILAYAH A', fontsize=12, fontweight='bold', color='darkgreen', ha='center', va='center', alpha=0.5)
+                ax.text(0.15, 0.65, 'WILAYAH B', fontsize=12, fontweight='bold', color='navy', ha='center', va='center', alpha=0.5)
+                ax.text(0.15, 0.15, 'WILAYAH C', fontsize=12, fontweight='bold', color='crimson', ha='center', va='center', alpha=0.5)
+                ax.text(0.5, 0.15, 'WILAYAH D', fontsize=12, fontweight='bold', color='purple', ha='center', va='center', alpha=0.5)
+                ax.text(0.85, 0.15, 'WILAYAH E', fontsize=12, fontweight='bold', color='darkorange', ha='center', va='center', alpha=0.5)
+                ax.text(0.85, 0.65, 'WILAYAH F', fontsize=12, fontweight='bold', color='teal', ha='center', va='center', alpha=0.5)
                 
-                # Dekorasi Grafik
-                ax.set_title("PETA SEBARAN MATRIKS KUALITAS AITEM (EVALUASI 1 - REVERSE HORIZONTAL)", fontsize=13, fontweight='bold', pad=15)
-                ax.set_xlabel("Tingkat Kesulitan (Mean) [Kanan ke Kiri]", fontsize=11, fontweight='bold', labelpad=10)
+                # --- EVALUASI 2 FIX: Judul Horizontal Sederhana ---
+                ax.set_title("PETA SEBARAN MATRIKS KUALITAS AITEM (EVALUASI 2)", fontsize=13, fontweight='bold', pad=15)
+                ax.set_xlabel("Tingkat Kesulitan (Mean)", fontsize=11, fontweight='bold', labelpad=10)
                 ax.set_ylabel("Daya Beda (Corrected Item-Total Correlation)", fontsize=11, fontweight='bold', labelpad=10)
                 ax.grid(True, linestyle=':', alpha=0.6)
                 ax.legend(loc='lower left', fontsize=9)
                 
                 plt.tight_layout()
                 
-                # Simpan Grafik ke Objek Memori
+                # Simpan ke Buffer memori
                 img_buf = io.BytesIO()
                 plt.savefig(img_buf, format='png', dpi=180)
                 img_buf.seek(0)
                 plt.close(fig)
                 
-                # Masukkan ke Sheet 3
+                # Masukkan ke berkas asli target Sheet 3
                 if 'GRAFIK POSISI AITEM' in wb.sheetnames:
                     ws_sheet3 = wb['GRAFIK POSISI AITEM']
                     ws_sheet3._images.clear() 
@@ -182,7 +182,7 @@ if uploaded_file is not None:
                 xl_img = OpenpyxlImage(img_buf)
                 ws_sheet3.add_image(xl_img, 'B3')
 
-            st.success("Sukses! Aturan Evaluasi 1 (Reverse Horizontal & Matriks Area A-F) Berhasil Diterapkan.")
+            st.success("Sukses! Perbaikan Evaluasi 2 (Anti-tumpukan Label & Judul Horizontal Bersih) Berhasil Diimplementasikan.")
 
             # 9. Export Gateway
             output = io.BytesIO()
@@ -190,9 +190,9 @@ if uploaded_file is not None:
             processed_data = output.getvalue()
 
             st.download_button(
-                label="📥 Download Excel Hasil Pemrosesan Final (Evaluasi 1)",
+                label="📥 Download Excel Hasil Pemrosesan Final (Evaluasi 2)",
                 data=processed_data,
-                file_name="hasil_analisis_quiz_kls_A_EVALUASI_1.xlsx",
+                file_name="hasil_analisis_quiz_kls_A_EVALUASI_2.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
